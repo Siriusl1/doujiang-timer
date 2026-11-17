@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>豆浆机定时计算器 · 半小时为单位</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    padding:20px;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%,#2f4257 0%,#141b24 60%,#0d1319 100%);
+    color:#e9f0f8;
+  }
+  .card{
+    width:100%;max-width:440px;
+    background:rgba(255,255,255,.055);
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:22px;
+    padding:26px 22px 22px;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);
+    backdrop-filter:blur(12px);
+  }
+  h1{margin:0 0 6px;font-size:20px;font-weight:600;text-align:center;letter-spacing:.5px}
+  .sub{margin:0 0 22px;text-align:center;font-size:12.5px;color:#8fa3ba}
+  .row{margin-bottom:14px}
+  .row label{display:block;margin-bottom:7px;font-size:12.5px;color:#8fa3ba}
+  input{
+    width:100%;padding:12px 14px;font-size:17px;font-family:inherit;
+    color:#fff;background:rgba(0,0,0,.3);
+    border:1px solid rgba(255,255,255,.14);border-radius:13px;
+    outline:none;color-scheme:dark;transition:border-color .18s,box-shadow .18s;
+  }
+  input:focus{border-color:#f5a623;box-shadow:0 0 0 3px rgba(245,166,35,.18)}
+  .hint{margin-top:-6px;margin-bottom:10px;font-size:11.5px;color:#7e93a8;line-height:1.5}
+  .result{
+    margin-top:20px;padding:18px 16px;border-radius:16px;
+    background:linear-gradient(135deg,rgba(245,166,35,.14),rgba(245,166,35,.04));
+    border:1px solid rgba(245,166,35,.3);
+    text-align:center;transition:all .2s;
+  }
+  .result.warn{
+    background:linear-gradient(135deg,rgba(255,120,80,.16),rgba(255,120,80,.04));
+    border-color:rgba(255,120,80,.38);
+  }
+  .rlabel{font-size:12.5px;color:#c9b48b;margin-bottom:8px}
+  .result.warn .rlabel{color:#e5a894}
+  .big{font-size:34px;font-weight:700;letter-spacing:1px;color:#ffc766;line-height:1.15}
+  .result.warn .big{color:#ff9a72}
+  .big small{font-size:16px;font-weight:500;margin:0 2px}
+  .done{margin-top:12px;font-size:13.5px;color:#a9bacd;line-height:1.7}
+  .done b{color:#fff;font-weight:600}
+  .tip{margin-top:10px;font-size:12.5px;line-height:1.6;color:#8fa3ba}
+  .foot{margin-top:18px;font-size:11.5px;color:#61758a;text-align:center;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🥛 豆浆机预约定时</h1>
+  <p class="sub">今晚睡前预约，明早 9:00 前喝上热豆浆</p>
+
+  <div class="row">
+    <label>现在时间</label>
+    <input type="time" id="nowTime">
+  </div>
+  <div class="row">
+    <label>希望做好的时间</label>
+    <input type="time" id="targetTime" value="09:00">
+  </div>
+  <div class="row">
+    <label>豆浆机最长可定时（小时）</label>
+    <input type="number" id="maxHours" value="12" min="0.5" max="24" step="0.5">
+  </div>
+
+  <div class="hint">⏱️ 豆浆机定时只能以 <b>30 分钟</b> 为单位，系统会自动向下取整，确保不晚于目标时间。</div>
+
+  <div class="result" id="result">
+    <div class="rlabel">定时设置为</div>
+    <div class="big" id="bigTime">--</div>
+    <div class="done" id="doneText"></div>
+    <div class="tip" id="tipText"></div>
+  </div>
+
+  <div class="foot">定时时长 = 现在时间 → 做好时间 的时间差（向下取整到 30 分钟）<br>超过最长上限时按上限计算（会提前做好）</div>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const nowEl = $('nowTime'), targetEl = $('targetTime'), maxEl = $('maxHours');
+  const resultEl = $('result'), bigEl = $('bigTime'), doneEl = $('doneText'), tipEl = $('tipText');
+
+  const STEP = 30; // 半小时 = 30分钟
+  const pad = n => String(n).padStart(2,'0');
+
+  function toMin(v){
+    const p = v.split(':');
+    return parseInt(p[0],10)*60 + parseInt(p[1],10);
+  }
+  function fmtClock(mins){
+    mins = ((Math.round(mins) % 1440) + 1440) % 1440;
+    return pad(Math.floor(mins/60)) + ':' + pad(mins%60);
+  }
+  function fmtDur(mins){
+    mins = Math.round(mins);
+    const h = Math.floor(mins/60), m = mins%60;
+    if (h > 0 && m > 0) return h + '<small>小时</small>' + m + '<small>分</small>';
+    if (h > 0) return h + '<small>小时</small>';
+    return m + '<small>分钟</small>';
+  }
+
+  function update(){
+    const nv = nowEl.value, tv = targetEl.value;
+    const mh = parseFloat(maxEl.value);
+
+    // 基础校验
+    if(!nv || !tv || !isFinite(mh) || mh <= 0){
+      bigEl.textContent = '--';
+      doneEl.textContent = '';
+      tipEl.textContent = '请填写完整的现在时间、目标时间和最长定时。';
+      resultEl.classList.remove('warn');
+      return;
+    }
+
+    const now    = toMin(nv);
+    const target = toMin(tv);
+    let diff = target - now;
+    if(diff <= 0) diff += 1440;          // 目标时间已过 → 顺延到明天
+
+    // 最大可定时长（分钟），向下取整到 STEP 的倍数
+    const maxMinRaw = mh * 60;
+    const maxMin = Math.floor(maxMinRaw / STEP) * STEP;
+
+    if(maxMin < STEP){
+      bigEl.textContent = '--';
+      doneEl.textContent = '';
+      tipEl.innerHTML = '⚠️ 最长可定时不足 30 分钟，无法以半小时为单位设置。';
+      resultEl.classList.add('warn');
+      return;
+    }
+
+    // 理想向下取整到半小时
+    const floorDiff = Math.floor(diff / STEP) * STEP;
+
+    // 实际定时时长：不能超过最大可定时长
+    let scheduledMin = Math.min(floorDiff, maxMin);
+
+    // 如果向下取整后为 0，说明距离目标不足 30 分钟，无法满足
+    if(scheduledMin < STEP){
+      bigEl.textContent = '--';
+      doneEl.textContent = '';
+      tipEl.innerHTML = '⚠️ 距离目标时间不足 30 分钟，无法用半小时为单位定时。请调整现在时间或目标时间。';
+      resultEl.classList.add('warn');
+      return;
+    }
+
+    // 预计做好时刻
+    const doneMin = now + scheduledMin;
+    const earlyMin = diff - scheduledMin; // 比目标提前的分钟数
+
+    // 显示定时时长（半小时倍数）
+    bigEl.innerHTML = fmtDur(scheduledMin);
+
+    // 做好时刻描述
+    let doneStr = '预计 <b>' + fmtClock(doneMin) + '</b> 做好';
+    if(earlyMin > 0){
+      doneStr += '，比目标 ' + fmtClock(target) + ' 早 <b>' + fmtDur(earlyMin) + '</b>';
+    }else{
+      doneStr += '，正好 ' + fmtClock(target);
+    }
+    doneEl.innerHTML = doneStr;
+
+    // 判断是否触发了上限
+    const hitMax = floorDiff > maxMin; // 因为超过最大时长被截断
+
+    if(hitMax){
+      resultEl.classList.add('warn');
+      tipEl.innerHTML = '⚠️ 距目标还有 ' + fmtDur(diff) +
+        '，超过豆浆机最长 ' + mh + ' 小时的上限，已按最长定时 <b>' + fmtDur(maxMin) + '</b> 计算。' +
+        '想更接近 ' + fmtClock(target) + '，可以在 <b>' + fmtClock(target - maxMin) + '</b> 之后再设置。';
+    }else if(earlyMin > 0){
+      // 因为半小时取整而提前
+      resultEl.classList.remove('warn');
+      tipEl.innerHTML = '✅ 由于定时只能以 30 分钟为单位，已向下取整，会提前 <b>' +
+        fmtDur(earlyMin) + '</b> 做好（目标 ' + fmtClock(target) + '）。';
+    }else{
+      resultEl.classList.remove('warn');
+      tipEl.innerHTML = '✅ 正好是 30 分钟的整数倍，按此定时即可。';
+    }
+  }
+
+  // 默认填入当前时间
+  const d = new Date();
+  nowEl.value = pad(d.getHours()) + ':' + pad(d.getMinutes());
+
+  [nowEl, targetEl, maxEl].forEach(el => {
+    el.addEventListener('input', update);
+    el.addEventListener('change', update);
+  });
+
+  update();
+})();
+</script>
+</body>
+</html>
